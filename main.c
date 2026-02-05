@@ -14,15 +14,49 @@
  *   You should have received a copy of the GNU General Public License     *
  *   along with this program; if not, write to the                         *
  *   Free Software Foundation, Inc.,                                       *
- *   59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.             *
+ *   59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.             +
+ +                                                                         +
+ +    This version was modified by Gus Mueller Jan 2026-Feb 2026           +
+ +    And has been successfully tested on an Atmega328p                    +
+ +    The necessary connection required to do the master-coordinated       +
+ +    reflash is the I2C signals and ground.  State is passed to the       +
+ +    bootloader through a byte set at 510 (decimal) in the AVR's EEPROM   +
+ +     Contains serial functionality that helped me debug it.              +
+ +                                                                         +
+ +                                                                         +
+ +                                                                         +
+ +                                                                         +
  ***************************************************************************/
+ 
+#define F_CPU 16000000UL
+
+#define BAUD 115200
+
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <avr/boot.h>
 #include <avr/pgmspace.h>
+#include <avr/wdt.h>
+#include <util/delay.h>
+#include <avr/eeprom.h>
+#include <stdlib.h>
+#include <util/twi.h>
+ 
+ 
+//gus-specific
+#define LED_PIN PB5
+//debug
 
-#define VERSION_STRING          "TWIBOOT v3.2"
-#define EEPROM_SUPPORT          1
+ 
+
+
+#ifndef BOOTLOADER_START
+#define BOOTLOADER_START 0x7000
+#endif
+
+
+#define VERSION_STRING          "TWIBOOT v3.3 NR"
+#define EEPROM_SUPPORT          0
 #define LED_SUPPORT             1
 
 #ifndef USE_CLOCKSTRETCH
@@ -34,16 +68,16 @@
 #endif
 
 #ifndef TWI_ADDRESS
-#define TWI_ADDRESS             0x29
+#define TWI_ADDRESS             20
 #endif
 
-#define F_CPU                   8000000ULL
-#define TIMER_DIVISOR           1024
-#define TIMER_IRQFREQ_MS        25
-#define TIMEOUT_MS              1000
 
-#define TIMER_MSEC2TICKS(x)     ((x * F_CPU) / (TIMER_DIVISOR * 1000ULL))
-#define TIMER_MSEC2IRQCNT(x)    (x / TIMER_IRQFREQ_MS)
+#define TIMER_DIVISOR        256
+#define TIMER_IRQFREQ_MS     25
+
+#define TIMER_MSEC2TICKS(x)  ((uint8_t)(((x) * F_CPU) / (TIMER_DIVISOR * 1000ULL)))
+#define TIMER_MSEC2IRQCNT(x) ((x) / TIMER_IRQFREQ_MS)
+
 
 #if (LED_SUPPORT)
 #define LED_INIT()              DDRB = ((1<<PORTB4) | (1<<PORTB5))
@@ -163,6 +197,8 @@
  *   SLA+W, 0x02, 0x02, addrh, addrl, {* bytes}, STO
  */
 
+uint16_t boot_magic = 0;
+
 const static uint8_t info[16] = VERSION_STRING;
 const static uint8_t chipinfo[8] = {
     SIGNATURE_0, SIGNATURE_1, SIGNATURE_2,
@@ -179,7 +215,10 @@ const static uint8_t chipinfo[8] = {
 #endif
 };
 
-static uint8_t boot_timeout = TIMER_MSEC2IRQCNT(TIMEOUT_MS);
+//static uint8_t boot_timeout = TIMER_MSEC2IRQCNT(TIMEOUT_MS);
+//static volatile uint16_t boot_timeout = 1;
+static volatile uint16_t boot_timeout = 10000;
+
 static uint8_t cmd = CMD_WAIT;
 
 /* flash buffer */
@@ -192,61 +231,361 @@ static uint8_t rstvect_save[2];
 static uint8_t appvect_save[2];
 #endif /* (VIRTUAL_BOOT_SECTION) */
 
+
+
+//for Gus's no-reset I2C bootloader:
+#define BOOT_MAGIC_ADDR ((uint16_t*)510)
+#define BOOT_MAGIC_VALUE 0xB007
+
+const static uint16_t pageInitializedValue = 0xFFFF;
+static uint16_t current_page = pageInitializedValue; //had been 0xFFFF
+static uint8_t page_dirty = 0;
+static uint8_t page_pos = 0;
+static uint16_t page_dirty_bytes = 0; // NEW: number of bytes buffered in current page
+ 
+static uint16_t current_page_word;
+volatile uint8_t flash_write_pending = 0;
+
+
+/////////////////////////////////////////////////////////////
+//debug bitbanger functions
+
+
+#define TX_CLOCK_PIN 1  // A0 -> PC0
+#define TX_DATA_PIN  0  // A1 -> PC1
+
+#define TX_DDR   DDRC
+#define TX_PORT  PORTC
+
+void init_tx_pins() {
+    TX_DDR |= (1 << TX_CLOCK_PIN) | (1 << TX_DATA_PIN); // set both as output
+    TX_PORT &= ~((1 << TX_CLOCK_PIN) | (1 << TX_DATA_PIN)); // drive low
+}
+
+// Send one byte MSB-first
+void tx_byte(uint8_t b) {
+    for (int i = 7; i >= 0; i--) {
+        if (b & (1 << i)) TX_PORT |=  (1 << TX_DATA_PIN);
+        else              TX_PORT &= ~(1 << TX_DATA_PIN);
+
+        TX_PORT |=  (1 << TX_CLOCK_PIN);  // clock HIGH
+        _delay_us(50);
+        TX_PORT &= ~(1 << TX_CLOCK_PIN);  // clock LOW
+        _delay_us(50);
+    }
+ 
+}
+
+
+/////////////////////////////////////////////////////////////
+//debug serial:
+
+// initialize UART
+static void uart_init(void)
+{
+    // 115200 baud @ 16 MHz using double-speed mode (U2X)
+    // UBRR = 16,000,000 / (8 * 115200) - 1 ˜ 16
+    UBRR0H = (16 >> 8) & 0xFF;
+    UBRR0L = 16 & 0xFF;
+
+    // Enable double speed
+    UCSR0A |= (1 << U2X0);
+
+    // Enable transmitter only
+    UCSR0B = (1 << TXEN0);
+
+    // 8N1 frame format
+    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
+}
+
+
+static void uart_putc(char c)
+{
+    while (!(UCSR0A & (1<<UDRE0))) {
+        ; // wait
+    }
+    UDR0 = c;
+}
+
+ 
+
+static void uart_puts(const char *s)
+{
+    while (*s) {
+        uart_putc(*s++);
+    }
+}
+
+
+void uart_putint(uint32_t value)
+{
+    char buf[11];   // max uint32_t: 4294967295 + '\0'
+    itoa(value, buf, 10);
+    uart_puts(buf);
+}
+ 
+
+void uart_puthex(int value)
+{
+    char buf[8];              // enough for -32768\0
+    itoa(value, buf, 16);
+    uart_puts(buf);
+}
+
+
+static inline char hex_digit(uint8_t v)
+{
+    v &= 0x0F;
+    return (v < 10) ? ('0' + v) : ('A' + (v - 10));
+}
+ 
+void u32_to_hex(uint32_t val, char *out)
+{
+    for (int i = 0; i < 8; i++) {
+        out[7 - i] = hex_digit(val);
+        val >>= 4;
+    }
+    out[8] = '\0';
+}
+
+void uart_put_bytes_hex(const uint8_t *data, size_t len)
+{
+    for (size_t i = 0; i < len; i++) {
+        uint8_t b = data[i];
+        uart_putc(hex_digit(b >> 4)); // high nibble
+        uart_putc(hex_digit(b));      // low nibble
+        uart_putc(' ');               // optional space between bytes
+    }
+    //uart_putc('\n');                  // optional newline at end
+}
+
+ 
+void uart_dump_buf(void)
+{
+    for (uint16_t i = 0; i < 128; i += 16) {
+
+        // print offset (hex)
+        char off[9];
+        u32_to_hex(i, off);
+        uart_puts(off);
+        uart_putc(' ');
+
+        // print up to 16 bytes
+        for (uint8_t j = 0; j < 16; j++) {
+            uint16_t idx = i + j;
+            if (idx >= 128) break;
+
+            uint8_t b = buf[idx];
+            uart_putc(hex_digit(b >> 4));
+            uart_putc(hex_digit(b));
+            uart_putc(' ');
+        }
+
+        uart_putc('\n');
+    }
+}
+/////////////////////////////////////////////////////////////////////////////
+//hardware debugging
+
+
+void setArduinoPin(uint8_t pin, uint8_t value)
+{
+    if (pin >= 2 && pin <= 7) {
+        // PORTD: D2..D7 ? PD2..PD7
+        uint8_t bit = pin;  // direct mapping
+
+        DDRD |=  (1 << bit);          // set as output
+        if (value)
+            PORTD |=  (1 << bit);
+        else
+            PORTD &= ~(1 << bit);
+    }
+    else if (pin >= 8 && pin <= 10) {
+        // PORTB: D8..D10 ? PB0..PB2
+        uint8_t bit = pin - 8;
+
+        DDRB |=  (1 << bit);          // set as output
+        if (value)
+            PORTB |=  (1 << bit);
+        else
+            PORTB &= ~(1 << bit);
+    }
+}
+
+//////////////////////////////////////////////////////////////////////////////////
+//new interrupt stuff we were missing
+
+
+void TWI_SlaveInit(void) {
+    TWAR = (TWI_ADDRESS << 1);   // set 7-bit address
+    TWCR = (1 << TWEN)  |          // enable TWI
+           (1 << TWEA)  |          // enable ACK
+           (1 << TWIE)  |          // enable TWI interrupt
+           (1 << TWINT);           // clear any pending TWINT
+}
+
+static void twi_handler(void);
+
+/*
+ISR(TWI_vect)
+{
+    twi_handler();
+}
+*/
+
+/*
+ISR(TWI_vect) {
+    uint8_t status = TWSR & 0xF8;  // mask prescaler bits
+
+
+    
+    #if defined (TWCR)
+        if (TWCR) {  //POLLING THE I2C interrupt flag to fake an interrupt
+          uart_puts("+++++++++++++++++++ MAIN TWI_VECT thingie");
+          TWI_vect(); 
+        }
+    #endif
+    
+
+    uart_puts("Status: ");
+    uart_putint(status);
+    uart_puts("\n");
+    switch (status) {
+
+        // **Own SLA+W received**
+        case TW_SR_SLA_ACK:
+        case TW_SR_GCALL_ACK:
+            page_pos = 0;                // reset buffer index
+            TWCR = (1<<TWEN)|(1<<TWEA)|(1<<TWIE)|(1<<TWINT); // ready for next byte
+            break;
+
+        // **Data received from master**
+        case TW_SR_DATA_ACK:
+            buf[page_pos++] = TWDR;  // read the received byte
+            TWCR = (1<<TWEN)|(1<<TWEA)|(1<<TWIE)|(1<<TWINT); // ACK next byte
+            break;
+
+        // **Stop or repeated start received**
+        case TW_SR_STOP:
+            // master finished page transfer
+            // you can now write the page to flash
+            TWCR = (1<<TWEN)|(1<<TWEA)|(1<<TWIE)|(1<<TWINT); // ready for next transfer
+            break;
+
+        // **Other states can be added for master read**
+        default:
+            TWCR = (1<<TWEN)|(1<<TWEA)|(1<<TWIE)|(1<<TWINT); // default continue
+            break;
+    }
+}
+*/
+
+ 
 /* *************************************************************************
- * write_flash_page
+ * write_flash_page - safe flash page write for ATmega328P
  * ************************************************************************* */
 static void write_flash_page(void)
 {
-    uint16_t pagestart = addr;
-    uint8_t size = SPM_PAGESIZE;
+    if (!page_dirty) return;  // nothing to write
+
+    // Save SREG and disable interrupts
+    uint8_t sreg = SREG;
+    cli();
+
+    uint16_t pagestart = current_page;
+    uint16_t fill_addr = pagestart;
     uint8_t *p = buf;
 
-#if (VIRTUAL_BOOT_SECTION)
-    if (pagestart == (RSTVECT_ADDR & ~(SPM_PAGESIZE -1)))
+    // Determine bytes to write (either full page or partially filled)
+    uint16_t bytes_to_write = page_dirty_bytes ? page_dirty_bytes : SPM_PAGESIZE;
+
+    // Prevent bootloader overwrite
+    if (pagestart >= BOOTLOADER_START)
     {
-        /* save original vectors for verify read */
+        sei();
+        return;
+    }
+
+#if (VIRTUAL_BOOT_SECTION)
+    if (pagestart == (RSTVECT_ADDR & ~(SPM_PAGESIZE - 1)))
+    {
         rstvect_save[0] = buf[RSTVECT_PAGE_OFFSET];
         rstvect_save[1] = buf[RSTVECT_PAGE_OFFSET + 1];
         appvect_save[0] = buf[APPVECT_PAGE_OFFSET];
         appvect_save[1] = buf[APPVECT_PAGE_OFFSET + 1];
 
-        /* replace reset vector with jump to bootloader address */
-        uint16_t rst_vector = OPCODE_RJMP(BOOTLOADER_START -1);
-        buf[RSTVECT_PAGE_OFFSET] = (rst_vector & 0xFF);
-        buf[RSTVECT_PAGE_OFFSET + 1] = (rst_vector >> 8) & 0xFF;
+        uint16_t rst_vector = OPCODE_RJMP(BOOTLOADER_START - 1);
+        buf[RSTVECT_PAGE_OFFSET]     = (rst_vector & 0xFF);
+        buf[RSTVECT_PAGE_OFFSET + 1] = (rst_vector >> 8);
 
-        /* replace application vector with jump to original reset vector */
         uint16_t app_vector = rstvect_save[0] | (rstvect_save[1] << 8);
         app_vector = OPCODE_RJMP(app_vector - APPVECT_NUM);
-
-        buf[APPVECT_PAGE_OFFSET] = (app_vector & 0xFF);
-        buf[APPVECT_PAGE_OFFSET + 1] = (app_vector >> 8) & 0xFF;
+        buf[APPVECT_PAGE_OFFSET]     = (app_vector & 0xFF);
+        buf[APPVECT_PAGE_OFFSET + 1] = (app_vector >> 8);
     }
-#endif /* (VIRTUAL_BOOT_SECTION) */
-
-    if (pagestart < BOOTLOADER_START)
-    {
-        boot_page_erase(pagestart);
-        boot_spm_busy_wait();
-
-        do {
-            uint16_t data = *p++;
-            data |= *p++ << 8;
-            boot_page_fill(addr, data);
-
-            addr += 2;
-            size -= 2;
-        } while (size);
-
-        boot_page_write(pagestart);
-        boot_spm_busy_wait();
-
-#if defined (ASRE) || defined (RWWSRE)
-        /* only required for bootloader section */
-        boot_rww_enable();
 #endif
+    uart_puts("pagestart:");
+    uart_putint(pagestart);
+    uart_puts(" bytes_to_write:");
+    uart_putint(bytes_to_write);
+    uart_puts("\n");
+    uart_dump_buf();
+    uart_puts("\n");
+
+    wdt_disable();  // disable watchdog
+    boot_spm_busy_wait();
+
+    // -------------------------------
+    // Step 1: Erase the target flash page
+    // -------------------------------
+    boot_page_erase(pagestart);
+    boot_spm_busy_wait();
+
+    // -------------------------------
+    // Step 2: Clear the internal page buffer
+    // -------------------------------
+    for (uint16_t a = pagestart; a < pagestart + SPM_PAGESIZE; a += 2)
+    {
+        boot_page_fill(a, 0xFFFF);
     }
-} /* write_flash_page */
+
+    // -------------------------------
+    // Step 3: Fill the buffer with actual data
+    // -------------------------------
+    while (bytes_to_write >= 2)
+    {
+        uint16_t data = *p++;
+        data |= (*p++) << 8;
+        boot_page_fill(fill_addr, data);
+        fill_addr += 2;
+        bytes_to_write -= 2;
+    }
+
+    // Handle odd remaining byte (if page_dirty_bytes is odd)
+    if (bytes_to_write == 1)
+    {
+        uint16_t data = *p++;
+        data |= 0x00 << 8;
+        boot_page_fill(fill_addr, data);
+    }
+
+    // -------------------------------
+    // Step 4: Commit buffer to flash
+    // -------------------------------
+    boot_page_write(pagestart);
+    boot_spm_busy_wait();
+
+    // Step 5: Re-enable RWW section
+    boot_rww_enable();
+
+    // Step 6: Clear dirty flags
+    page_dirty = 0;
+    page_dirty_bytes = 0;
+
+    // Restore interrupts
+    SREG = sreg;
+}
+
 
 
 #if (EEPROM_SUPPORT)
@@ -303,9 +642,29 @@ static void write_eeprom_buffer(uint8_t size)
 #endif /* (USE_CLOCKSTRETCH == 0) */
 #endif /* EEPROM_SUPPORT */
 
+static inline void flash_stream_byte(uint8_t data)
+{
+    uint8_t page_offset = addr % SPM_PAGESIZE;
+    uint16_t page_start = addr - page_offset;
+    current_page = page_start;
+    buf[page_offset] = data;
+    addr++;
+    page_dirty = 1;
+    page_dirty_bytes = page_offset + 1;
+    //uart_puts("..................................\n");
+    /*
+    uart_puts("current page:");
+    uart_putint(current_page);
+    uart_puts("   page_start:");
+    uart_putint(page_start);
+    uart_puts("   addr:");
+    uart_putint(addr);
+    uart_puts("\n");
+    */
+}
 
-/* *************************************************************************
- * TWI_data_write
+ /* *************************************************************************
+ * TWI_data_write - I2C Slave Data Handler
  * ************************************************************************* */
 static uint8_t TWI_data_write(uint8_t bcnt, uint8_t data)
 {
@@ -318,16 +677,11 @@ static uint8_t TWI_data_write(uint8_t bcnt, uint8_t data)
             {
                 case CMD_SWITCH_APPLICATION:
                 case CMD_ACCESS_MEMORY:
-                    /* no break */
-
                 case CMD_WAIT:
-                    /* abort countdown */
                     boot_timeout = 0;
                     cmd = data;
                     break;
-
                 default:
-                    /* boot app now */
                     cmd = CMD_BOOT_APPLICATION;
                     ack = 0x00;
                     break;
@@ -342,25 +696,39 @@ static uint8_t TWI_data_write(uint8_t bcnt, uint8_t data)
                     {
                         cmd = CMD_BOOT_APPLICATION;
                     }
+                    else if (data == BOOTTYPE_BOOTLOADER)
+                    {
+                        boot_magic = BOOT_MAGIC_VALUE;
+                        eeprom_write_word(BOOT_MAGIC_ADDR, boot_magic);
 
+                        uart_puts("ABOUT TO DO THE TWI_DATA RESET\n");
+                        wdt_enable(WDTO_15MS);
+                        while (1);
+                    }
                     ack = 0x00;
                     break;
 
                 case CMD_ACCESS_MEMORY:
+                    //uart_puts("got a CMD_ACCESS_MEMORY\n");
                     if (data == MEMTYPE_CHIPINFO)
                     {
                         cmd = CMD_ACCESS_CHIPINFO;
                     }
                     else if (data == MEMTYPE_FLASH)
                     {
+                        //uart_puts("got a MEMTYPE_FLASH\n");
                         cmd = CMD_ACCESS_FLASH;
+
+                        page_dirty = 0;               // nothing yet
+                        page_dirty_bytes = 0;
+                        //current_page = pageInitializedValue; // this was causing problems
                     }
 #if (EEPROM_SUPPORT)
                     else if (data == MEMTYPE_EEPROM)
                     {
                         cmd = CMD_ACCESS_EEPROM;
                     }
-#endif /* (EEPROM_SUPPORT) */
+#endif
                     else
                     {
                         ack = 0x00;
@@ -374,12 +742,39 @@ static uint8_t TWI_data_write(uint8_t bcnt, uint8_t data)
             break;
 
         case 2:
+            addr = ((uint16_t)data) << 8;
+            break;
+
         case 3:
-            addr <<= 8;
             addr |= data;
+            /*
+            uart_puts("\nfrom address mode: ");
+            uart_putint(addr);
+            uart_puts("\n");
+
+            // Initialize current_page on first byte received
+            uart_puts("Initial conditional, pageinitializedValue: ");
+            
+            uart_putint(pageInitializedValue);
+            uart_puts("current page: ");
+            uart_putint(current_page);
+            uart_puts("\n");
+            */
+            if (current_page == pageInitializedValue)
+            {
+                current_page = 0; // start at first page
+                /*
+                uart_puts("Initializing current_page to: ");
+                uart_putint(current_page);
+                uart_puts("\n");
+                */
+            }
             break;
 
         default:
+            //uart_puts("*********** COMMAND:");
+            //uart_putint(cmd);
+            //uart_puts("\n");
             switch (cmd)
             {
 #if (EEPROM_SUPPORT)
@@ -391,31 +786,83 @@ static uint8_t TWI_data_write(uint8_t bcnt, uint8_t data)
                 case CMD_ACCESS_EEPROM:
                     cmd = CMD_WRITE_EEPROM_PAGE;
                     /* fall through */
-
                 case CMD_WRITE_EEPROM_PAGE:
-#endif /* (USE_CLOCKSTRETCH) */
-#endif /* (EEPROM_SUPPORT) */
+#endif
+#endif
                 case CMD_ACCESS_FLASH:
                 {
-                    uint8_t pos = bcnt -4;
+                    cmd = CMD_WRITE_FLASH_PAGE;
+                    flash_stream_byte(data);
+                    break;
 
-                    buf[pos] = data;
-                    if (pos >= (SPM_PAGESIZE -1))
+   
+                    
+                    //THIS CONDITION WAS NEVER TRUE:
+                    /*
+                    // Flush previous page if we crossed into a new one
+                    if (page_offset == 0 && page_dirty_bytes > 0  && addr > 0)
                     {
-                        if (cmd == CMD_ACCESS_FLASH)
-                        {
-#if (USE_CLOCKSTRETCH)
-                            write_flash_page();
-#else
-                            cmd = CMD_WRITE_FLASH_PAGE;
-#endif
-                        }
+                        uart_puts("WRITE_FLASH-newpage\n");
+                        uart_puts("-+-------------------------\n");
+                        uart_puts("_fill_addr:");
+                        uart_putint(current_page);
+                        uart_puts("\n_pagestart:");
+                        uart_putint(current_page);
+                        uart_puts("\n");
 
-                        ack = 0x00;
+#if (USE_CLOCKSTRETCH)
+                        TWCR &= ~(1 << TWINT);
+                        write_flash_page();
+                        TWCR |= (1 << TWINT);
+#else
+                        write_flash_page();
+#endif
+                        page_dirty = 0;
+                        page_dirty_bytes = 0;
                     }
+                    */
+             
+ 
+                    // Store byte in page buffer
+                    //uart_puts("FILLING BUFFER. offset: ");
+                    //uart_putint(page_offset);
+                    //uart_puts("=>");
+                    //uart_putint(data);
+                    //uart_puts("\n");
+          
+                    /*
+                    //THIS CONDITION WAS NEVER TRUE:
+                    // Flush page immediately if full
+                    if (page_offset == (SPM_PAGESIZE - 1))
+                    {
+                        uart_puts("WRITE_FLASH--pagefull\n");
+                        uart_puts("-!-------------------------\n");
+                        uart_puts(" fill_addr:");
+                        uart_putint(current_page);
+                        uart_puts("\n pagestart:");
+                        uart_putint(current_page);
+                        uart_puts("\n");
+
+#if (USE_CLOCKSTRETCH)
+                        TWCR &= ~(1 << TWINT);
+                        write_flash_page();
+                        TWCR |= (1 << TWINT);
+#else
+                        write_flash_page();
+#endif
+                        page_dirty = 0;
+                        page_dirty_bytes = 0;
+                    }
+                    */
                     break;
                 }
+                case CMD_WRITE_FLASH_PAGE:
+                {
+                  //also doing this here, since mostly the cmd value is 66, or CMD_WRITE_FLASH_PAGE
+                  flash_stream_byte(data);
 
+                  break;
+                }
                 default:
                     ack = 0x00;
                     break;
@@ -425,6 +872,7 @@ static uint8_t TWI_data_write(uint8_t bcnt, uint8_t data)
 
     return ack;
 } /* TWI_data_write */
+
 
 
 /* *************************************************************************
@@ -495,89 +943,96 @@ static uint8_t TWI_data_read(uint8_t bcnt)
 /* *************************************************************************
  * TWI_vect
  * ************************************************************************* */
-static void TWI_vect(void)
+static void twi_handler(void)
 {
-    static uint8_t bcnt;
-    uint8_t control = TWCR;
+    static uint8_t bcnt;       // buffer counter
 
-    switch (TWSR & 0xF8)
+    // Step 1: read TWSR before touching TWCR
+    uint8_t status = TWSR & 0xF8;
+
+    // Debug: print status
+    /*
+    char buf[9];
+    uart_puts("TWSR & 0xF8: ");
+    u32_to_hex((uint32_t)status, buf);
+    uart_puts(buf);
+    uart_puts("\n");  
+    */
+    // Step 2: handle TWI state
+    switch (status)
     {
-        /* SLA+W received, ACK returned -> receive data and ACK */
+        // SLA+W received, ACK returned -> receive data
         case 0x60:
             bcnt = 0;
             LED_RT_ON();
             break;
 
-        /* prev. SLA+W, data received, ACK returned -> receive data and ACK */
+        // Previous SLA+W, data received, ACK returned -> store data
         case 0x80:
             if (TWI_data_write(bcnt++, TWDR) == 0x00)
             {
-                /* the ACK returned by TWI_data_write() is not for the current
-                 * data in TWDR, but for the next byte received
-                 */
-                control &= ~(1<<TWEA);
+                setArduinoPin(2, 1);
+                // disable ACK for next byte if TWI_data_write says so
+                // will update TWCR at the end
             }
             break;
 
-        /* SLA+R received, ACK returned -> send data */
+        // SLA+R received, ACK returned -> send data
         case 0xA8:
             bcnt = 0;
             LED_RT_ON();
-            /* fall through */
+            // fall through
 
-        /* prev. SLA+R, data sent, ACK returned -> send data */
+        // Previous SLA+R, data sent, ACK returned -> send next byte
         case 0xB8:
+            setArduinoPin(3, 1);
             TWDR = TWI_data_read(bcnt++);
             break;
 
-        /* prev. SLA+W, data received, NACK returned -> IDLE */
+        // SLA+W, data received, NACK returned -> last byte
         case 0x88:
+            setArduinoPin(4, 1);
             TWI_data_write(bcnt++, TWDR);
-            /* fall through */
-
-        /* STOP or repeated START -> IDLE */
-        case 0xA0:
-#if (USE_CLOCKSTRETCH == 0)
-            if ((cmd == CMD_WRITE_FLASH_PAGE)
-#if (EEPROM_SUPPORT)
-                || (cmd == CMD_WRITE_EEPROM_PAGE)
-#endif
-               )
-            {
-                /* disable ACK for now, re-enable after page write */
-                control &= ~(1<<TWEA);
-                TWCR = (1<<TWINT) | control;
-
-#if (EEPROM_SUPPORT)
-                if (cmd == CMD_WRITE_EEPROM_PAGE)
-                {
-                    write_eeprom_buffer(bcnt -4);
-                }
-                else
-#endif /* (EEPROM_SUPPORT) */
-                {
-                    write_flash_page();
-                }
-            }
-#endif /* (USE_CLOCKSTRETCH) */
-
-            bcnt = 0;
-            /* fall through */
-
-        /* prev. SLA+R, data sent, NACK returned -> IDLE */
-        case 0xC0:
-            LED_RT_OFF();
-            control |= (1<<TWEA);
             break;
 
-        /* illegal state(s) -> reset hardware */
+        // STOP or repeated START -> reset state
+        case 0xA0:
+        #if (USE_CLOCKSTRETCH == 0)
+            if ((cmd == CMD_WRITE_FLASH_PAGE)
+        #if (EEPROM_SUPPORT)
+                || (cmd == CMD_WRITE_EEPROM_PAGE)
+        #endif
+               )
+            {
+                //uart_puts("ADDR AT 0xA0: ");
+                //uart_putint(addr);
+                //uart_puts("\n");
+                if ((addr) % SPM_PAGESIZE == 0) {
+                  //uart_puts("EVEN STEVEN!! woooooot!");
+                  flash_write_pending = 1; // flag main loop to commit page
+                }
+            }
+        #endif
+            //uart_puts("in the good part of 0xA0\n");
+            bcnt = 0;
+            break;
+
+        // SLA+R, data sent, NACK returned -> idle
+        case 0xC0:
+            LED_RT_OFF();
+            break;
+
+        // illegal/unknown state -> reset TWI hardware
         default:
-            control |= (1<<TWSTO);
+            TWCR |= (1<<TWSTO);
             break;
     }
 
-    TWCR = (1<<TWINT) | control;
-} /* TWI_vect */
+    // Step 3: re-arm TWI for next event
+    // always leave TWEN, TWIE, TWEA set; clear TWINT to acknowledge current event
+    TWCR = (1<<TWINT) | (1<<TWEN) | (1<<TWIE) | (1<<TWEA);
+}
+
 #endif /* defined (TWCR) */
 
 #if defined (USICR)
@@ -591,21 +1046,36 @@ static void usi_statemachine(uint8_t usisr)
 
     uint8_t data = USIDR;
     uint8_t state = usi_state & USI_STATE_MASK;
-
+    
     /* Start Condition detected */
     if (usisr & (1<<USISIF))
     {
         /* wait until SCL goes low */
         while (USI_PIN_SCL());
+        
 
         usi_state = USI_STATE_SLA | USI_ENABLE_SCL_HOLD;
         state = USI_STATE_IDLE;
     }
-
+    
     /* Stop Condition detected */
     if (usisr & (1<<USIPF))
     {
         LED_RT_OFF();
+
+        if (page_dirty) {
+            setArduinoPin(8, 1);
+    #if (USE_CLOCKSTRETCH)
+            /* USI does not truly stretch SCL, but keep symmetry */
+            write_flash_page();
+    #else
+            write_flash_page();
+    #endif
+            page_dirty = 0;
+            flash_write_pending = 0;
+            _delay_ms(2);
+        }
+
         usi_state = USI_STATE_IDLE;
         state = USI_STATE_IDLE;
     }
@@ -806,11 +1276,42 @@ void disable_wdt_timer(void)
 int main(void) __attribute__ ((OS_main, section (".init9")));
 int main(void)
 {
+    // --- basic MCU init ---
+    MCUSR = 0;          // clear reset flags
+    wdt_disable();
+    
+    TWI_SlaveInit(); 
+
+    uint8_t stay_in_bootloader = 0;
+    uint8_t mcusr = MCUSR;  // save reset flags
+    MCUSR = 0;
+
+    // --- read boot magic from EEPROM ---
+    uint16_t boot_magic = eeprom_read_word(BOOT_MAGIC_ADDR);
+
+    // --- default: jump to sketch ---
+    cmd = CMD_BOOT_APPLICATION;
+
+    if (boot_magic == BOOT_MAGIC_VALUE) {
+        uart_puts("HERE FROM BOOT MAGIC\n");
+
+        stay_in_bootloader = 1;           // force bootloader loop
+        cmd = CMD_WAIT;                    // reset TWI command state
+        boot_timeout = 0xFFFF;
+
+        // clear boot magic in EEPROM so next reset is normal
+        eeprom_write_word(BOOT_MAGIC_ADDR, 0);
+
+        // small delay to let I2C bus stabilize
+        _delay_ms(5000);
+    }
+
+    // --- LED init ---
     LED_INIT();
     LED_GN_ON();
 
 #if (VIRTUAL_BOOT_SECTION)
-	/* load current values (for reading flash) */
+    /* load current values (for reading flash) */
     rstvect_save[0] = pgm_read_byte_near(RSTVECT_ADDR);
     rstvect_save[1] = pgm_read_byte_near(RSTVECT_ADDR + 1);
     appvect_save[0] = pgm_read_byte_near(APPVECT_ADDR);
@@ -826,73 +1327,114 @@ int main(void)
 #error "TCCR0(B) not defined"
 #endif
 
+    uart_init();
+    init_tx_pins();
+
 #if defined (TWCR)
     /* TWI init: set address, auto ACKs */
     TWAR = (TWI_ADDRESS<<1);
     TWCR = (1<<TWEA) | (1<<TWEN);
 #elif defined (USICR)
-    USI_PIN_INIT();
+    USI_PIN_INIT()
     usi_statemachine(0x00);
 #else
 #error "No TWI/USI peripheral found"
 #endif
 
-    while (cmd != CMD_BOOT_APPLICATION)
-    {
-#if defined (TWCR)
-        if (TWCR & (1<<TWINT))
-        {
-            TWI_vect();
-        }
-#elif defined (USICR)
-        if (USISR & ((1<<USISIF) | (1<<USIOIF) | (1<<USIPF)))
-        {
-            usi_statemachine(USISR);
-        }
-#endif
+    sei();  // enable interrupts
 
-#if defined (TIFR)
-        if (TIFR & (1<<TOV0))
-        {
-            TIMER0_OVF_vect();
-            TIFR = (1<<TOV0);
+    // --- bootloader loop: only if forced or page write pending ---
+    
+    while (stay_in_bootloader && (cmd != CMD_BOOT_APPLICATION || page_dirty || flash_write_pending)) {
+        static uint16_t heartbeat = 0;
+        heartbeat++;
+        //TWCR = (1 << TWEN) | (1 << TWIE) | (1 << TWEA); //new code gus installed
+        #if defined (TWCR)
+        TWCR = (1<<TWEN) | (1<<TWEA); // NO TWIE
+        #endif
+ 
+        if (heartbeat == 0) {
+            //uart_puts("BOOTLOADER LOOPING...\n");
+            uart_putint(cmd);
+            uart_puts("\n");
         }
-#elif defined (TIFR0)
-        if (TIFR0 & (1<<TOV0))
-        {
-            TIMER0_OVF_vect();
-            TIFR0 = (1<<TOV0);
+        
+        if (flash_write_pending) {
+            //uart_puts("======from the main loop\n");
+            write_flash_page();
+            flash_write_pending = 0;
         }
-#else
-#error "TIFR(0) not defined"
-#endif
+
+        // handle TWI / USI events
+        #if defined (TWCR)
+            if (TWCR & (1<<TWINT)) {  //POLLING THE I2C interrupt flag to fake an interrupt
+              //uart_puts("+++++++++++++++++++ MAIN TWI_VECT thingie\n");
+              twi_handler(); 
+            }
+        #elif defined (USICR)
+            if (USISR & ((1<<USISIF)|(1<<USIOIF)|(1<<USIPF))) { 
+              usi_statemachine(USISR); 
+            }
+        #endif
+
+        // handle timer overflow
+        #if defined (TIFR)
+            if (TIFR & (1<<TOV0)) { 
+              TIMER0_OVF_vect(); 
+              TIFR = (1<<TOV0); 
+             }
+        #elif defined (TIFR0)
+            if (TIFR0 & (1<<TOV0)) { 
+              TIMER0_OVF_vect(); 
+              TIFR0 = (1<<TOV0);
+            }
+        #endif
     }
 
+    //the why we left section
+    uart_puts("Stay in Bootloader: ");
+    uart_putint((int)stay_in_bootloader);
+    uart_puts("\n");
+    uart_puts("CMD: ");
+    uart_putint((int)cmd);
+    uart_puts("\n");
+    uart_puts("page dirty: ");
+    uart_putint((int)page_dirty);
+    uart_puts("\n");   
+    uart_puts("flash write pending: ");
+    uart_putint((int)flash_write_pending);
+    uart_puts("\n"); 
+    // --- disable peripherals before jumping ---
 #if defined (TWCR)
-    /* Disable TWI but keep address! */
-    TWCR = 0x00;
+    TWCR = 0x00;  // disable TWI but keep address?
 #elif defined (USICR)
-    /* Disable USI peripheral */
     USICR = 0x00;
 #endif
 
-    /* disable timer0 */
 #if defined (TCCR0)
-    TCCR0 = 0x00;
+    TCCR0 = 0x00;  // disable timer0
 #elif defined (TCCR0B)
     TCCR0B = 0x00;
-#else
-#error "TCCR0(B) not defined"
 #endif
 
     LED_OFF();
 
+    // --- optional LED pause ---
 #if (LED_SUPPORT)
     uint16_t wait = 0x0000;
-    do {
-        __asm volatile ("nop");
-    } while (--wait);
-#endif /* (LED_SUPPORT) */
+    do { __asm volatile ("nop"); } while (--wait);
+#endif
+
+    // --- final jump to sketch ---
+    ;
+
+    if (page_dirty) {
+        uart_puts("PAGE DIRTY, writing now\n");
+        write_flash_page();
+        page_dirty = 0;
+    }
+    
+    uart_puts("ABOUT TO JUMP TO APP\n");
 
     jump_to_app();
 } /* main */
