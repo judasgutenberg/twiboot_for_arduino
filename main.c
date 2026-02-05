@@ -1293,7 +1293,7 @@ int main(void)
     cmd = CMD_BOOT_APPLICATION;
 
     if (boot_magic == BOOT_MAGIC_VALUE) {
-        uart_puts("HERE FROM BOOT MAGIC\n");
+        uart_puts("Now in the bootloader...\n");
 
         stay_in_bootloader = 1;           // force bootloader loop
         cmd = CMD_WAIT;                    // reset TWI command state
@@ -1355,8 +1355,8 @@ int main(void)
  
         if (heartbeat == 0) {
             //uart_puts("BOOTLOADER LOOPING...\n");
-            uart_putint(cmd);
-            uart_puts("\n");
+            //uart_putint(cmd);
+            //uart_puts("\n");
         }
         
         if (flash_write_pending) {
@@ -1392,18 +1392,18 @@ int main(void)
     }
 
     //the why we left section
-    uart_puts("Stay in Bootloader: ");
-    uart_putint((int)stay_in_bootloader);
-    uart_puts("\n");
-    uart_puts("CMD: ");
-    uart_putint((int)cmd);
-    uart_puts("\n");
-    uart_puts("page dirty: ");
-    uart_putint((int)page_dirty);
-    uart_puts("\n");   
-    uart_puts("flash write pending: ");
-    uart_putint((int)flash_write_pending);
-    uart_puts("\n"); 
+    //uart_puts("Stay in Bootloader: ");
+    //uart_putint((int)stay_in_bootloader);
+    //uart_puts("\n");
+    //uart_puts("CMD: ");
+    //uart_putint((int)cmd);
+    //uart_puts("\n");
+    //uart_puts("page dirty: ");
+    //uart_putint((int)page_dirty);
+    //uart_puts("\n");   
+    //uart_puts("flash write pending: ");
+    //uart_putint((int)flash_write_pending);
+    //uart_puts("\n"); 
     // --- disable peripherals before jumping ---
 #if defined (TWCR)
     TWCR = 0x00;  // disable TWI but keep address?
@@ -1434,7 +1434,7 @@ int main(void)
         page_dirty = 0;
     }
     
-    uart_puts("ABOUT TO JUMP TO APP\n");
+    uart_puts("Returning to slave app...\n");
 
     jump_to_app();
 } /* main */
