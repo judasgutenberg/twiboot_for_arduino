@@ -6,6 +6,12 @@ twiboot acts as a slave device on a TWI/I2C bus and allows reading/writing of th
 As a compile time option (EEPROM_SUPPORT) twiboot also allows reading/writing of the whole internal EEPROM memory.
 The bootloader is not able to update itself (only application flash memory region accessible).
 
+## Modifications by Gus Mueller ##
+This version only requires an I2C connection to a master to reflash the sketch area of the Flash.  
+This code uses two bytes beginning at EEPROM address 510 (decimal) to pass a "stay in bootloader"
+state to the bootloader so that the master can then send the new flash image.
+
+## Devices Supported ##
 Currently the following AVR MCUs are supported:
 
 AVR MCU | Flash bytes used (.text + .data) | Bootloader region size
