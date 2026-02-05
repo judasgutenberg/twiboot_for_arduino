@@ -11,7 +11,7 @@ This version only requires an I2C connection to a master to reflash the sketch a
 This code uses two bytes beginning at EEPROM address 510 (decimal) to pass a "stay in bootloader"
 state to the bootloader so that the master can then send the new flash image.
 
-The files slaveupdate.cpp and slaveupdate.h contain a library of functions to run on an ESP8266 master, which will allow that master to stream a file from a web server to the slave while this bootloader is running on it.
+The files slaveupdate.cpp and slaveupdate.h contain a library of functions to run on an ESP8266 master, which will allow that master to stream a hex image file from a web server to the slave while this bootloader is running on it.
 
 For now this version is bulky and requires a 4k bootloader partition in the flash. But some day soon I will slim it down and get rid of all the uart and other debugging code.
 
