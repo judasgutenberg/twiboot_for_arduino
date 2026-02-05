@@ -49,6 +49,10 @@
 #define BOOTLOADER_START 0x7000
 #endif
 
+#ifndef UART_DEBUG
+#define UART_DEBUG 0
+#endif
+
 
 #define VERSION_STRING          "TWIBOOT v3.3 NR"
 #define EEPROM_SUPPORT          0
@@ -269,7 +273,7 @@ void tx_byte(uint8_t b) {
 
 /////////////////////////////////////////////////////////////
 //debug serial, because i eventually got serial to work
-
+#if UART_DEBUG
 // initialize UART
 static void uart_init(void)
 {
@@ -366,6 +370,8 @@ void uart_dump_buf(void)
         uart_putc('\n');
     }
 }
+
+#endif //uart_debug
 /////////////////////////////////////////////////////////////////////////////
 //hardware debugging, for the stage when i was just using LEDs to debug
 
@@ -405,60 +411,6 @@ void TWI_SlaveInit(void) {
 }
 
 static void twi_handler(void);
-
-/*
-ISR(TWI_vect)
-{
-    twi_handler();
-}
-*/
-
-/*
-ISR(TWI_vect) {
-    uint8_t status = TWSR & 0xF8;  // mask prescaler bits
-
-
-    
-    #if defined (TWCR)
-        if (TWCR) {  //POLLING THE I2C interrupt flag to fake an interrupt
-          uart_puts("+++++++++++++++++++ MAIN TWI_VECT thingie");
-          TWI_vect(); 
-        }
-    #endif
-    
-
-    uart_puts("Status: ");
-    uart_putint(status);
-    uart_puts("\n");
-    switch (status) {
-
-        // **Own SLA+W received**
-        case TW_SR_SLA_ACK:
-        case TW_SR_GCALL_ACK:
-            page_pos = 0;                // reset buffer index
-            TWCR = (1<<TWEN)|(1<<TWEA)|(1<<TWIE)|(1<<TWINT); // ready for next byte
-            break;
-
-        // **Data received from master**
-        case TW_SR_DATA_ACK:
-            buf[page_pos++] = TWDR;  // read the received byte
-            TWCR = (1<<TWEN)|(1<<TWEA)|(1<<TWIE)|(1<<TWINT); // ACK next byte
-            break;
-
-        // **Stop or repeated start received**
-        case TW_SR_STOP:
-            // master finished page transfer
-            // you can now write the page to flash
-            TWCR = (1<<TWEN)|(1<<TWEA)|(1<<TWIE)|(1<<TWINT); // ready for next transfer
-            break;
-
-        // **Other states can be added for master read**
-        default:
-            TWCR = (1<<TWEN)|(1<<TWEA)|(1<<TWIE)|(1<<TWINT); // default continue
-            break;
-    }
-}
-*/
 
  
 /* *************************************************************************
@@ -504,6 +456,8 @@ static void write_flash_page(void)
         buf[APPVECT_PAGE_OFFSET + 1] = (app_vector >> 8);
     }
 #endif
+
+#if UART_DEBUG
     uart_puts("pagestart:");
     uart_putint(pagestart);
     uart_puts(" bytes_to_write:");
@@ -511,7 +465,7 @@ static void write_flash_page(void)
     uart_puts("\n");
     uart_dump_buf();
     uart_puts("\n");
-
+#endif
     wdt_disable();  // disable watchdog
     boot_spm_busy_wait();
 
@@ -680,8 +634,9 @@ static uint8_t TWI_data_write(uint8_t bcnt, uint8_t data)
                     {
                         boot_magic = BOOT_MAGIC_VALUE;
                         eeprom_write_word(BOOT_MAGIC_ADDR, boot_magic);
-
+                        #if UART_DEBUG
                         uart_puts("ABOUT TO DO THE TWI_DATA RESET\n");
+                        #endif
                         wdt_enable(WDTO_15MS);
                         while (1);
                     }
@@ -1273,8 +1228,9 @@ int main(void)
     cmd = CMD_BOOT_APPLICATION;
 
     if (boot_magic == BOOT_MAGIC_VALUE) {
+        #if UART_DEBUG
         uart_puts("Now in the bootloader...\n");
-
+        #endif
         stay_in_bootloader = 1;           // force bootloader loop
         cmd = CMD_WAIT;                    // reset TWI command state
         boot_timeout = 0xFFFF;
@@ -1306,8 +1262,9 @@ int main(void)
 #else
 #error "TCCR0(B) not defined"
 #endif
-
+    #if UART_DEBUG
     uart_init();
+    #endif
     init_tx_pins();
 
 #if defined (TWCR)
@@ -1407,14 +1364,14 @@ int main(void)
 
     // --- final jump to sketch ---
     ;
-
+    //this code never runs:
     if (page_dirty) {
-        uart_puts("PAGE DIRTY, writing now\n");
+        //uart_puts("PAGE DIRTY, writing now\n");
         write_flash_page();
         page_dirty = 0;
     }
-    
+#if UART_DEBUG
     uart_puts("Returning to slave app...\n");
-
+#endif
     jump_to_app();
 } /* main */
