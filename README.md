@@ -7,7 +7,9 @@ As a compile time option (EEPROM_SUPPORT) twiboot also allows reading/writing of
 The bootloader is not able to update itself (only application flash memory region accessible).
 
 ## Modifications by Gus Mueller (February 5, 2026) ##
-This version only requires an I2C connection to a master to reflash the sketch area of the slave's flash. Support is provided in my <a href=https://github.com/judasgutenberg/Arduino_I2C_Slave_With_Commands  target=Arduino>Arduino Slave With Commands sketch</a> to jump into this bootloader directly so that the master can then send the data necessary to reflash it.
+This version only requires an I2C connection to a master to reflash the sketch area of the slave's flash. The idea here is to be able to have an Arduino sketch running on some fairly capable internet-capable microcontroller (such as an ESP8266) that can, while also logging data and controlling relays, re-flash the sketch running on an AVR Arduino slave being used as a port expander.  In, for example, my ESP8266 Remote Control system, this allows me to not only trigger remote OTA updates of my distant microcontrollers, but also any connected I2C slaves.
+
+Support is provided in my <a href=https://github.com/judasgutenberg/Arduino_I2C_Slave_With_Commands  target=Arduino>Arduino Slave With Commands sketch</a> to jump into this bootloader directly so that the master can then send the data necessary to reflash it.
 This code uses two bytes beginning at EEPROM address 510 (decimal) to pass a "stay in bootloader"
 state from the sketch to the bootloader so that the master can then send the new flash image.  When that is finished, the slave will boot back into the sketch if it can be run. This all happens entirely over I2C.  There is a risk that if power should fail during reflashing you may have to rescue the slave with a programmer such as a USBTiny, so keep this in mind in your mission-critical applications.
 
