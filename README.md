@@ -36,7 +36,8 @@ atmega328p | 810 (0x32A) | 512 words
 
 
 ## Operation ##
-twiboot is installed in the bootloader section and executed directly after reset (BOOTRST fuse is programmed).
+twiboot is installed in the bootloader section and executed directly after reset (BOOTRST fuse is programmed). Normally control is immediately handed to the sketch (application). But if a magic value is found in the two bytes starting at EEPROM location 510 (decimal), then the bootloader waits to receive bytes to flash from the master.  Eventually this will timeout if no such data is forthcoming and control will be handed back to the sketch.
+
 For MCUs without bootloader section see [Virtual bootloader section](#virtual-bootloader-section) below.
 
 While running, twiboot configures the TWI/USI peripheral as slave device and waits for valid protocol messages
