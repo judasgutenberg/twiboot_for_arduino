@@ -54,6 +54,11 @@
 #endif
 
 
+#ifndef CLOCKED_SERIAL_DEBUG
+#define CLOCKED_SERIAL_DEBUG 0
+#endif
+
+
 #define VERSION_STRING          "TWIBOOT v3.3 NR"
 #define EEPROM_SUPPORT          0
 #define LED_SUPPORT             1
@@ -246,6 +251,7 @@ volatile uint8_t flash_write_pending = 0;
 /////////////////////////////////////////////////////////////
 //debug bitbanger functions. the plan was to use this when serial was unreliable
 
+#if CLOCKED_SERIAL_DEBUG
 #define TX_CLOCK_PIN 1  // A0 -> PC0
 #define TX_DATA_PIN  0  // A1 -> PC1
 
@@ -270,6 +276,8 @@ void tx_byte(uint8_t b) {
     }
  
 }
+
+#endif
 
 /////////////////////////////////////////////////////////////
 //debug serial, because i eventually got serial to work
@@ -1262,11 +1270,12 @@ int main(void)
 #else
 #error "TCCR0(B) not defined"
 #endif
-    #if UART_DEBUG
+#if UART_DEBUG
     uart_init();
-    #endif
+#endif
+#if CLOCKED_SERIAL_DEBUG
     init_tx_pins();
-
+#endif
 #if defined (TWCR)
     /* TWI init: set address, auto ACKs */
     TWAR = (TWI_ADDRESS<<1);
