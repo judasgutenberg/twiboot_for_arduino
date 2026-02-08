@@ -17,7 +17,7 @@ The files slaveupdate.cpp and slaveupdate.h contain a library of functions to ru
 
 The original twiboot didn't have built-in support for chunked data (that is, data in packets significantly smaller than the 128 byte page size of an Atmega328p).  Such chunking is essential if one is using most Arduino I2C libraries, which impose a 32 byte limit on I2C transfers.  Chunking is configurable from the master end, and, after much trial and error, I settled on 16 byte chunks.  The 32 byte Arduino I2C packet limitation cannot all be used for data, as there is some overhead with those packets. I would not attempt to use chunks larger than 24 bytes.
 
-For now this version is bulky and requires at least a 2k bootloader partition in the flash. If you set UART_DEBUG to 1, you will require a 4k boot partition. But the UART is really only good for debugging; if it is enabled, the bootloader fails about half the time. Otherwise the bootloader is extremely reliable. 
+For now this version is bulky and requires at least a 2k bootloader partition in the flash. If you set UART_DEBUG to 1, you will require a 4k boot partition. But the UART is really only good for debugging; if it is enabled, the bootloader fails about half the time. Otherwise the bootloader is extremely reliable. Using my ESP8266 Remote Master to flash a firmware hosted on an Apache server, it typically takes 30 seconds to flash a 12kilobyte Atmega328p firmware.
 
 I have only tested this new version on Atmega328ps and am skeptical that AVRs with I2C emulated by bit-banging will work, though apparently the original twiboot supported that.
 
