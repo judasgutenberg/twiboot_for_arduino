@@ -29,7 +29,7 @@ AVR MCU | Flash bytes used (.text + .data) | Bootloader region size
 atmega328p | 1616 (0x650) | 1024 words
 atmeg644p | 1644 (0x66C) | 1024 words
 
-(Compiled on Ubuntu 18.04 LTS (gcc 5.4.0 / avr-libc 2.0.0) with EEPROM and LED support)
+(Compiled on Windows 10 with EEPROM and LED support)
 
 
 ## Operation ##
