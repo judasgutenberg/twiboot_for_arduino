@@ -26,7 +26,6 @@ Currently the following AVR MCUs are supported:
 
 AVR MCU | Flash bytes used (.text + .data) | Bootloader region size
 --- | --- | ---
- 
 atmega328p | 1616 (0x650) | 1024 words
 atmeg644p | 1644 (0x66C) | 1024 words
 
