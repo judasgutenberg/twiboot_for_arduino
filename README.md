@@ -21,16 +21,14 @@ For now this version is bulky and requires at least a 2k bootloader partition in
 
 I have only tested this new version on Atmega328ps and Atmega644ps and am skeptical that AVRs with I2C emulated by bit-banging will work, though apparently the original twiboot supported that.
 
-## Devices Supported ##
+## Devices Supported in This Version ##
 Currently the following AVR MCUs are supported:
 
 AVR MCU | Flash bytes used (.text + .data) | Bootloader region size
 --- | --- | ---
-attiny85 | 954 (0x3BA) | 512 words
-atmega8 | 786 (0x312) | 512 words
-atmega88 | 810 (0x32A) | 512 words
-atmega168 | 810 (0x32A) | 512 words
-atmega328p | 810 (0x32A) | 512 words
+ 
+atmega328p | 1616 (0x650) | 1024 words
+atmeg644p | 1644 (0x66C) | 1024 words
 
 (Compiled on Ubuntu 18.04 LTS (gcc 5.4.0 / avr-libc 2.0.0) with EEPROM and LED support)
 
