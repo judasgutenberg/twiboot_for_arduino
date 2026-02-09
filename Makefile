@@ -8,10 +8,12 @@ TARGET = twiboot
 SOURCE = $(wildcard *.c)
 
 # select MCU
-MCU = attiny85
+MCU = atmega2560
 
-AVRDUDE_PROG := -c avr910 -b 115200 -P /dev/ttyUSB0
+AVRDUDE_PROG := -c usbtiny -b 115200 -P /dev/ttyUSB0
 #AVRDUDE_PROG := -c dragon_isp -P usb
+
+
 
 # ---------------------------------------------------------------------------
 
@@ -52,11 +54,45 @@ ifeq ($(MCU), atmega328p)
 # Fuse L: 0xc2 (8Mhz internal RC-Osz.)
 # Fuse H: 0xdc (512 words bootloader)
 # Fuse E: 0xfd (2.7V BOD)
-AVRDUDE_MCU=m328p -F
+AVRDUDE_MCU=m328p
 AVRDUDE_FUSES=lfuse:w:0xc2:m hfuse:w:0xdc:m efuse:w:0xfd:m
 
 BOOTLOADER_START=0x7C00
 endif
+
+ifeq ($(MCU), atmega644p)
+# atmega644p:
+# Fuse L: 0xFB (8MHz external crystal)
+# Fuse H: 0xD8 (BOOTRST, 8KB bootloader, SPI enabled)
+# Fuse E: 0xFD (BOD disabled)
+AVRDUDE_MCU=m644p
+AVRDUDE_FUSES=lfuse:w:0xFB:m hfuse:w:0xD8:m efuse:w:0xFD:m
+
+BOOTLOADER_START=0xF000
+endif
+
+ifeq ($(MCU), atmega1284p)
+# atmega644p:
+# Fuse L: 0xFB (8MHz external crystal)
+# Fuse H: 0xD8 (BOOTRST, 8KB bootloader, SPI enabled)
+# Fuse E: 0xFD (BOD disabled)
+AVRDUDE_MCU=m644p
+AVRDUDE_FUSES=lfuse:w:0xFF:m hfuse:w:0xD8:m efuse:w:0xFD:m
+
+BOOTLOADER_START=0x1F000
+endif
+
+ifeq ($(MCU), atmega2560)
+# atmega2560:
+# Fuse L: 0xFF (external crystal, 16 MHz)
+# Fuse H: 0xDA (BOOTRST, 4KB bootloader, SPI enabled)
+# Fuse E: 0xFD (BOD enabled, 2.7V)
+AVRDUDE_MCU=m2560
+AVRDUDE_FUSES=lfuse:w:0xFF:m hfuse:w:0xDA:m efuse:w:0xFD:m
+BOOTLOADER_START=0x3F800
+endif
+
+
 
 ifeq ($(MCU), attiny85)
 # attiny85:
