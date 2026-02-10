@@ -32,6 +32,11 @@ atmega2560 | 1612 (0x64C) | 2048 bytes | avrdude -c usbtiny -p m2560  -U lfuse:w
 
 [Compiled on Windows 10 (AVR_8_bit_GNU_Toolchain_4.0.0_52) with EEPROM and LED support]
 
+## Master Code
+Obviously, to take advantage of this bootloader, there needs to be a master microcontroller communicating with the slave over I2C.
+In my use case, the master is powerful enough to pull data off a web server and then send it to the slave when it is ready to be programmed. 
+I've included a library of master functions (slaveupdate.cpp) for the ESP8266 that can do this.  This can be easily be modified to run on an ESP32
+or a Raspberry Pi.
 
 ## Operation ##
 twiboot is installed in the bootloader section and executed directly after reset (BOOTRST fuse is programmed). Normally control is immediately handed to the sketch (application). But if a magic value is found in the two bytes starting at EEPROM location 510 (decimal), then the bootloader waits to receive bytes to flash from the master.  Eventually this will timeout if no such data is forthcoming and control will be handed back to the sketch.
