@@ -30,7 +30,7 @@ atmega328p | 1616 (0x650) | 2048 bytes | avrdude.exe -c usbtiny -p m328p -U lfus
 atmeg644p | 1644 (0x66C) | 2048 bytes | avrdude -c usbtiny -p m644p -U lfuse:r:-:h -U hfuse:r:-:h -U efuse:r:-:h -U lock:r:-:h
 atmega2560 | 1612 (0x64C) | 2048 bytes | avrdude -c usbtiny -p m2560  -U lfuse:w:0xFF:m -U hfuse:w:0xDA:m -U efuse:w:0xFD:m
 
-[Compiled on Windows 10 with (AVR_8_bit_GNU_Toolchain_4.0.0_52) EEPROM and LED support]
+[Compiled on Windows 10 (AVR_8_bit_GNU_Toolchain_4.0.0_52) with EEPROM and LED support]
 
 
 ## Operation ##
