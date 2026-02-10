@@ -1,4 +1,4 @@
-# twiboot - a TWI / I2C bootloader for AVR MCUs ##
+# twiboot for Arduino - an I2C bootloader for AVR MCUs flashable by an Arduino master ##
 twiboot is a simple/small bootloader for AVR MCUs written in C. It uses the integrated TWI or USI peripheral of the controller to implement a I2C slave.
 It was originally created to update I2C controlled BLMCs (Brushless Motor Controller) without an AVR ISP adapter.
 
