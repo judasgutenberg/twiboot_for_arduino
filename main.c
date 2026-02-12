@@ -31,6 +31,7 @@
 #define F_CPU 16000000UL
 
 #define BAUD 115200
+#define UBRR_VALUE ((F_CPU / (8UL * BAUD)) - 1)
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -44,6 +45,7 @@
  
 #define LED_PIN PB5
 
+//use 7000 for atmega328p, f000 for atmega644p
 #ifndef BOOTLOADER_START
 #define BOOTLOADER_START 0x7000
 #endif
@@ -58,7 +60,7 @@
 
 #define VERSION_STRING          "TWIBOOT v3.3 NR"
 #define EEPROM_SUPPORT          0
-#define LED_SUPPORT             1
+#define LED_SUPPORT             0
 
 #ifndef USE_CLOCKSTRETCH
 #define USE_CLOCKSTRETCH        0
@@ -201,7 +203,7 @@
 uint16_t boot_magic = 0;
 
 const static uint8_t info[16] = VERSION_STRING;
-const static uint8_t chipinfo[8] = {
+const static uint16_t chipinfo[8] = {
     SIGNATURE_0, SIGNATURE_1, SIGNATURE_2,
     SPM_PAGESIZE,
 
@@ -216,6 +218,8 @@ const static uint8_t chipinfo[8] = {
 #endif
 };
 
+
+ 
 //static uint8_t boot_timeout = TIMER_MSEC2IRQCNT(TIMEOUT_MS);
 //static volatile uint16_t boot_timeout = 1;
 static volatile uint16_t boot_timeout = 1000;
@@ -283,25 +287,41 @@ void tx_byte(uint8_t b) {
 // initialize UART
 static void uart_init(void)
 {
-    // 115200 baud @ 16 MHz using double-speed mode (U2X)
-    // UBRR = 16,000,000 / (8 * 115200) - 1 ˜ 16
-    UBRR0H = (16 >> 8) & 0xFF;
-    UBRR0L = 16 & 0xFF;
-    // Enable double speed
-    UCSR0A |= (1 << U2X0);
-    // Enable transmitter only
-    UCSR0B = (1 << TXEN0);
-    // 8N1 frame format
-    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
-}
+#if defined(__AVR_ATmega32__) || defined(__AVR_ATmega32A__)
+    /* ---------- classic UART ---------- */
+    UCSRA = (1 << U2X);   // double speed
 
+    UBRRH = (uint8_t)(UBRR_VALUE >> 8);
+    UBRRL = (uint8_t)(UBRR_VALUE & 0xFF);
+
+    UCSRB = (1 << TXEN);  // TX only
+    UCSRC = (1 << URSEL) | (1 << UCSZ1) | (1 << UCSZ0); // 8N1
+#else
+
+    /* ---------- USART0 ---------- */
+    UBRR0H = (uint8_t)(UBRR_VALUE >> 8);
+    UBRR0L = (uint8_t)(UBRR_VALUE & 0xFF);
+
+    UCSR0A |= (1 << U2X0);        // double speed
+    UCSR0B = (1 << TXEN0);        // TX only
+    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00); // 8N1
+
+#endif
+}
 
 static void uart_putc(char c)
 {
-    while (!(UCSR0A & (1<<UDRE0))) {
+#if defined(__AVR_ATmega32A__) || defined(__AVR_ATmega32__)
+    while (!(UCSRA & (1 << UDRE))) {
+        ; // wait
+    }
+    UDR = c;
+#else
+    while (!(UCSR0A & (1 << UDRE0))) {
         ; // wait
     }
     UDR0 = c;
+#endif
 }
 
 static void uart_puts(const char *s)
@@ -377,7 +397,8 @@ void uart_dump_buf(void)
     }
 }
 
-#endif //uart_debug
+#endif // UART_DEBUG
+
 /////////////////////////////////////////////////////////////////////////////
 //hardware debugging, for the stage when i was just using LEDs to debug
 
@@ -412,8 +433,13 @@ void TWI_SlaveInit(void) {
     TWAR = (TWI_ADDRESS << 1);   // set 7-bit address
     TWCR = (1 << TWEN)  |          // enable TWI
            (1 << TWEA)  |          // enable ACK
-           (1 << TWIE)  |          // enable TWI interrupt
+           //(1 << TWIE)  |          // enable TWI interrupt
            (1 << TWINT);           // clear any pending TWINT
+           
+    #if defined(__AVR_ATmega644P__) || defined(__AVR_ATmega644__) || defined(__AVR_ATmega1284P__)
+        TWCR |= (1 << TWIE);
+    #endif
+ 
 }
 
 static void twi_handler(void);
@@ -500,6 +526,10 @@ static void write_flash_page(void)
         boot_page_fill(fill_addr, data);
         fill_addr += 2;
         bytes_to_write -= 2;
+        
+        if(bytes_to_write % 64 == 0) {
+          wdt_reset();
+        }
     }
 
     // Handle odd remaining byte (if page_dirty_bytes is odd)
@@ -913,7 +943,7 @@ static void twi_handler(void)
         case 0x80:
             if (TWI_data_write(bcnt++, TWDR) == 0x00)
             {
-                setArduinoPin(2, 1);
+ 
                 // disable ACK for next byte if TWI_data_write says so
                 // will update TWCR at the end
             }
@@ -927,13 +957,12 @@ static void twi_handler(void)
 
         // Previous SLA+R, data sent, ACK returned -> send next byte
         case 0xB8:
-            setArduinoPin(3, 1);
+ 
             TWDR = TWI_data_read(bcnt++);
             break;
 
         // SLA+W, data received, NACK returned -> last byte
         case 0x88:
-            setArduinoPin(4, 1);
             TWI_data_write(bcnt++, TWDR);
             break;
 
@@ -1006,7 +1035,7 @@ static void usi_statemachine(uint8_t usisr)
         LED_RT_OFF();
 
         if (page_dirty) {
-            setArduinoPin(8, 1);
+  
     #if (USE_CLOCKSTRETCH)
             /* USI does not truly stretch SCL, but keep symmetry */
             write_flash_page();
@@ -1173,6 +1202,28 @@ static void (*jump_to_app)(void) __attribute__ ((noreturn)) = (void*)0x0000;
 #endif
 
 
+#if defined(__AVR_ATmega644P__) || defined(__AVR_ATmega644__) || defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega2560__)
+void init3(void) __attribute__((naked, section(".init3")));
+void init3(void)
+{
+    cli();
+
+    MCUSR = 0;      // preserve this only if you do not need reset cause
+    wdt_disable(); // canonical, safe, portable
+
+    asm volatile ("clr __zero_reg__");
+}
+
+
+void __attribute__((naked, section(".init0"))) kill_wdt(void)
+{
+    MCUSR = 0;
+    WDTCSR = (1<<WDCE) | (1<<WDE);
+    WDTCSR = 0;
+}
+#endif
+
+
 /* *************************************************************************
  * init1
  * ************************************************************************* */
@@ -1189,6 +1240,9 @@ void init1(void)
     defined (__AVR_ATmega128__) || defined (__AVR_ATmega162__)
   SP = RAMEND;
 #endif
+#if defined(__AVR_ATmega644P__) || defined(__AVR_ATmega644__) || defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega2560__)
+  SP = RAMEND;
+#endif
 } /* init1 */
 
 
@@ -1197,11 +1251,11 @@ void init1(void)
  * system reset. So disable it as soon as possible.
  * automagically called on startup
  */
-#if defined (__AVR_ATmega88__) || defined (__AVR_ATmega168__) || \
-    defined (__AVR_ATmega328P__)
+#if defined (__AVR_ATmega88__) || defined (__AVR_ATmega168__) ||  defined (__AVR_ATmega328P__)
 /* *************************************************************************
  * disable_wdt_timer
  * ************************************************************************* */
+
 void disable_wdt_timer(void) __attribute__((naked, section(".init3")));
 void disable_wdt_timer(void)
 {
@@ -1209,6 +1263,16 @@ void disable_wdt_timer(void)
     WDTCSR = (1<<WDCE) | (1<<WDE);
     WDTCSR = (0<<WDE);
 } /* disable_wdt_timer */
+#elif defined(__AVR_ATmega32A__) || defined(__AVR_ATmega32__)
+
+void disable_wdt_timer(void) __attribute__((naked, section(".init3")));
+void disable_wdt_timer(void)
+{
+    MCUCSR = 0;                       // clear reset flags
+    WDTCR = (1<<WDTOE) | (1<<WDE);    // enable timed sequence
+    WDTCR = 0;                       // disable watchdog
+}
+
 #endif
 
 
@@ -1219,14 +1283,56 @@ int main(void) __attribute__ ((OS_main, section (".init9")));
 int main(void)
 {
     // --- basic MCU init ---
-    MCUSR = 0;          // clear reset flags
+    #if defined (__AVR_ATmega64__)  
+    MCUCR = (1 << IVCE);
+    MCUCR = 0;          // IVSEL = 0 ? application vectors
+    
+    #elif defined (__AVR_ATmega32A__) || defined(__AVR_ATmega32__)
+        MCUCSR = 0;
+    #else
+        MCUSR = 0;
+    #endif
+    
     wdt_disable();
+    #if defined (__AVR_ATmega32A__) || defined(__AVR_ATmega32__)
+        MCUCSR = 0;
+    #else
+        MCUSR = 0;
+    #endif
+    #if defined (__AVR_ATmega64__)
+    SP = RAMEND;
+    
+    #endif
+    #if UART_DEBUG
+      uart_puts("Bootloader triggered...");
+    #endif
+    /*
+    //if you want to make sure you are entering the bootloader if serial isn't working:
+    for(int i =0; i<10; i++) {
+      setArduinoPin(5, 1);
+      _delay_ms(50);
+      setArduinoPin(5, 0);
+      _delay_ms(20);
+    }
+    */
+    
+ 
+ 
     
     TWI_SlaveInit(); 
 
     uint8_t stay_in_bootloader = 0;
-    uint8_t mcusr = MCUSR;  // save reset flags
-    MCUSR = 0;
+ 
+    
+    
+    #if defined (__AVR_ATmega32A__) || defined(__AVR_ATmega32__)
+        uint8_t mcusr = MCUCSR;  // save reset flags
+        MCUCSR = 0;
+    #else
+        uint8_t mcusr = MCUSR;  // save reset flags
+        MCUSR = 0;
+    #endif
+    
 
     // --- read boot magic from EEPROM ---
     uint16_t boot_magic = eeprom_read_word(BOOT_MAGIC_ADDR);
@@ -1291,6 +1397,7 @@ int main(void)
     // --- bootloader loop: only if forced or page write pending ---
     
     while (stay_in_bootloader && (cmd != CMD_BOOT_APPLICATION || page_dirty || flash_write_pending)) {
+        
         static uint16_t heartbeat = 0;
         heartbeat++;
         
