@@ -8,9 +8,9 @@ TARGET = twiboot
 SOURCE = $(wildcard *.c)
 
 # select MCU
-MCU = atmega2560
+MCU = atmega328p
 
-AVRDUDE_PROG := -c usbtiny -b 115200 -P /dev/ttyUSB0
+AVRDUDE_PROG := -c usbtiny -B 10
 #AVRDUDE_PROG := -c dragon_isp -P usb
 
 
@@ -50,14 +50,14 @@ BOOTLOADER_START=0x3C00
 endif
 
 ifeq ($(MCU), atmega328p)
-# atmega328p:
-# Fuse L: 0xc2 (8Mhz internal RC-Osz.)
-# Fuse H: 0xdc (512 words bootloader)
-# Fuse E: 0xfd (2.7V BOD)
-AVRDUDE_MCU=m328p
-AVRDUDE_FUSES=lfuse:w:0xc2:m hfuse:w:0xdc:m efuse:w:0xfd:m
+# atmega328p @ 8MHz EXTERNAL crystal (Arduino Pro Mini 3.3V has physical crystal)
+# Fuse L: 0xF8 (8MHz external crystal, no CKDIV8, slowly rising power)
+# Fuse H: 0xD8 (4KB/2048 words bootloader, BOOTSZ1:0=00, BOOTRST enabled)
+# Fuse E: 0xFD (2.7V BOD)
+AVRDUDE_MCU=m328p -F
+AVRDUDE_FUSES=lfuse:w:0xf8:m hfuse:w:0xd8:m efuse:w:0xfd:m
 
-BOOTLOADER_START=0x7C00
+BOOTLOADER_START=0x7000
 endif
 
 ifeq ($(MCU), atmega644p)
