@@ -18,6 +18,7 @@
  +                                                                         +
  +    This version was modified by Gus Mueller Jan 2026-Feb 2026           +
  +    And has been successfully tested on an Atmega328p                    +
+ +    and several other AVRs                                               +
  +    The necessary connection required to do the master-coordinated       +
  +    reflash is the I2C signals and ground.  State is passed to the       +
  +    bootloader through a byte set at 510 (decimal) in the AVR's EEPROM   +
