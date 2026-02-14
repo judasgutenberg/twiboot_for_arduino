@@ -6,7 +6,7 @@ setlocal enabledelayedexpansion
 set ERR=0
 
 echo Compiling main.c to object file...
-avr-gcc.exe -mmcu=atmega328p -Os -c main.c -o twiboot.o
+avr-gcc.exe -mmcu=atmega328p  -DF_CPU=16000000UL -Os -c main.c -o twiboot.o
 if errorlevel 1 (
     echo ERROR: Compilation failed!
     set ERR=1
@@ -15,7 +15,7 @@ if errorlevel 1 (
 if !ERR! neq 0 exit /b !ERR!
 
 echo Linking object file to ELF at 0x7000...
-avr-gcc.exe -mmcu=atmega328p -Wl,-Ttext=0x7000 twiboot.o -o twiboot.elf
+avr-gcc.exe -mmcu=atmega328p   -Wl,-Ttext=0x7000 twiboot.o -o twiboot.elf
 if errorlevel 1 (
     echo ERROR: Linking failed!
     set ERR=1

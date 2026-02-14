@@ -6,7 +6,7 @@ setlocal enabledelayedexpansion
 set ERR=0
 
 echo Compiling main.c to object file...
-avr-gcc.exe -mmcu=atmega32a -Os -c main.c -o twiboot.o
+avr-gcc.exe -mmcu=atmega32a  -DF_CPU=16000000UL -Os -c main.c -o twiboot.o
 if errorlevel 1 (
     echo ERROR: Compilation failed!
     set ERR=1
