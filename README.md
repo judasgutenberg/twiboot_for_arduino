@@ -7,7 +7,7 @@ As a compile time option (EEPROM_SUPPORT) twiboot also allows reading/writing of
 The bootloader is not able to update itself (only application flash memory region accessible).
 
 ## Modifications by Gus Mueller (February 5, 2026) ##
-This version only requires an I2C connection to a master to reflash the sketch area of the slave's flash. The idea here is to be able to have an Arduino sketch running on some fairly powerful internet-capable microcontroller (such as an ESP8266) that can, while also logging data and controlling relays, stream a .hex image off a web server and use it to re-flash the sketch running on an AVR Arduino slave being used as an I2C port expander <em>using I2C alone</em>.  In, for example, <a href=https://github.com/judasgutenberg/Esp8266_RemoteControl>my ESP8266 Remote Control system</a>, this allows me to not only trigger remote OTA updates of my distant microcontrollers, but also any connected I2C slaves.  My I2C slaves started out as simple port expanders but now do all sorts of complicated tasks and it's good to be able to fix bugs on them not only in-circuit but also from anywhere on the internet without being forced to use an interface they don't ordinarily use.
+This version only requires an I2C connection to a master to reflash the sketch area of the slave's flash. The idea here is to be able to have an Arduino sketch running on some fairly powerful internet-capable microcontroller (such as an ESP8266) that can, while also logging data and controlling relays, stream a .hex image off a web server and use it to re-flash the sketch running on an AVR Arduino slave being used as an I2C port expander <em>using I2C alone</em>.  In, for example, <a href=https://github.com/judasgutenberg/Esp8266_RemoteControl>my ESP8266 Remote Control system</a>, this allows me to not only trigger remote OTA updates of my distant microcontrollers, but also any connected I2C slaves.  My I2C slaves started out as simple port expanders but now do all sorts of complicated tasks and it's good to be able to fix bugs on them not only in-circuit but also from anywhere on the internet without being forced to use a communication technology they don't ordinarily use.
 
 Support is provided in my <a href=https://github.com/judasgutenberg/Arduino_I2C_Slave_With_Commands  target=Arduino>Arduino Slave With Commands sketch</a> to jump into this bootloader directly so that the master can then send the data necessary to reflash it.
 This code uses two bytes beginning at EEPROM address 510 (decimal) to pass a "stay in bootloader"
@@ -15,11 +15,11 @@ state from the sketch to the bootloader so that the master can then send the new
 
 The files slaveupdate.cpp and slaveupdate.h contain a library of functions to run on an ESP8266 master, which will allow that master to stream a chunked hex image file from a web server to the slave while this bootloader is running on it.  
 
-The original twiboot didn't have built-in support for chunked data (that is, data in packets significantly smaller than the 128 byte page size of an Atmega328p).  Such chunking is essential if one is using most Arduino I2C libraries, which impose a 32 byte limit on I2C transfers.  Chunking is configurable from the master end, and, after much trial and error, I settled on 16 byte chunks.  The 32 byte Arduino I2C packet limitation cannot all be used for data, as there is some overhead with those packets. I would not attempt to use chunks larger than 24 bytes.  The master does not need to concern itself with the flash page size of the slave being flashed;  this entirely handled by the bootloader, which will look up the required page size and flash the microcontroller accordingly. That said, the master pulls data from a .hex file on the internet line by line and uses a 128 byte buffer to store the bytes from that.
+The original twiboot didn't have built-in support for chunked data (that is, data in packets significantly smaller than the 128 byte page size of an Atmega328p).  Such chunking is essential if one is using most Arduino I2C libraries, which impose a 32 byte limit on I2C transfers.  Chunking is configurable from the master end, and, after much trial and error, I settled on 16 byte chunks.  The 32 byte Arduino I2C packet limitation cannot all be used for data, as there is a four byte overhead with those packets. I would not attempt to use chunks larger than 28 bytes.  The master does not need to concern itself with the flash page size of the slave being flashed;  this is entirely handled by the bootloader, which will look up the required page size and flash the microcontroller accordingly. That said, the master pulls data from a .hex file hosted somewhere on the internet line by line and uses a 128 byte buffer to store the bytes from that.
 
 For now this version is bulky and requires at least a 2k bootloader partition in the flash. If you set UART_DEBUG to 1, you will require a 4k boot partition. But the UART is really only good for debugging; if it is enabled, the bootloader fails about half the time. Otherwise the bootloader is extremely reliable. I have tested it by going back and forth between two different firmware versions dozens of times and the correct firmware boots up every time without failure. Using my ESP8266 Remote Master to flash a firmware hosted on an Apache server, it typically takes 30 seconds to flash a 12kilobyte Atmega328p firmware.
 
-I have tested this new version on Atmega328p, Atmega32a, Atmega644p, and Atmega2560 and am skeptical that AVRs with I2C emulated via USI will work, though apparently the original twiboot supported that.  If you want to skip the hassle of recompiling, I've got pre-compiled versions for the microcontrollers I have tested it on.
+I have tested this new version on Atmega328p, Atmega32a, Atmega32u, Atmega644p, Atmega1284p, and Atmega2560 and am skeptical that AVRs with I2C emulated via USI will work, though apparently the original twiboot supported that.  If you want to skip the hassle of recompiling, I've got pre-compiled versions for the microcontrollers I have tested it on.
 
 ## Devices Supported in This Version ##
 Currently the following AVR MCUs are supported:
@@ -27,9 +27,12 @@ Currently the following AVR MCUs are supported:
 AVR MCU | Flash bytes used (.text + .data) | Bootloader region size  | avrdude setup command
 --- | --- | --- | ---
 atmega32a  | 1404 (0x57C)  | 2048 bytes | avrdude -c usbtiny -p m32 -U lfuse:w:0xFF:m -U hfuse:w:0xD8:m
-atmega328p | 1616 (0x650) | 2048 bytes | avrdude.exe -c usbtiny -p m328p -U lfuse:w:0xF8:m -U hfuse:w:0xD8:m -U efuse:w:0xFD:m
+atmega32u  | 1656 (0x678)  | 2048 bytes | avrdude -c usbtiny -p m32u4 -U lfuse:w:0xFF:m -U hfuse:w:0xD8:m -U efuse:w:0xCB:m
+atmega328p | 1616 (0x650) | 2048 bytes | avrdude -c usbtiny -p m328p -U lfuse:w:0xF8:m -U hfuse:w:0xD8:m -U efuse:w:0xFD:m
 atmeg644p | 1644 (0x66C) | 2048 bytes | avrdude -c usbtiny -p m644p -U lfuse:r:-:h -U hfuse:r:-:h -U efuse:r:-:h -U lock:r:-:h
-atmega2560 | 1612 (0x64C) | 2048 bytes | avrdude -c usbtiny -p m2560  -U lfuse:w:0xFF:m -U hfuse:w:0xDA:m -U efuse:w:0xFD:m
+atmega1284p| 1602 (0x642) | 2048 bytes | avrdude -c usbtiny -p m1284p -U lfuse:w:0xFF:m -U hfuse:w:0xD8:m -U efuse:w:0xFD:m
+atmega2560 | 1612 (0x64C) | 2048 bytes | avrdude -c usbtiny -p m2560  -U lfuse:w:0xFF:m -U hfuse:w:0xDA:m -U efuse:w:
+
 
 [Compiled on Windows 10 (AVR_8_bit_GNU_Toolchain_4.0.0_52) with EEPROM and LED support]
 

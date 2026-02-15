@@ -11,6 +11,7 @@ the commands would be something like this for Atmega328p
 #define SLAVEUPDATE_CONFIG_H
 #include "i2cslave.h"
 #include "globals.h"
+#include "utilities.h"
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
 #include <ESP8266HTTPClient.h>
@@ -19,12 +20,12 @@ the commands would be something like this for Atmega328p
  
 extern bool pagePending;   // true when current page has unsent data
 uint8_t hexToByte(String hex);
-bool sendFlashPage(uint32_t pageAddr, uint8_t *data, bool debug);
-void flushLastPage(bool debug);
-void processHexLine(String line, bool debug);
-void streamHexFile(Stream *stream, bool debug = true);
+bool sendFlashPage(uint32_t pageAddr, uint8_t *data, int totalBytes, bool debug);
+void flushLastPage(uint8_t *pageBuffer, bool debug);
+void processHexLine(String line, uint8_t *pageBuffer, bool debug);
+void streamHexFile(Stream *stream, uint8_t *pageBuffer, uint32_t flashFileSize, bool debug);
 void updateSlaveFirmware(String url);
-void finalizeBootloaderUpdate(bool debug);
+void finalizeBootloaderUpdate(uint8_t *pageBuffer, bool debug);
 void runSlaveSketch();
 void enterSlaveBootloader();
 void leaveSlaveBootloader();
