@@ -28,9 +28,9 @@
  +                                                                         +
  ***************************************************************************/
  
-#define F_CPU 16000000UL
+#define F_CPU 8000000UL
 
-#define BAUD 115200
+#define BAUD 9600
 #define UBRR_VALUE ((F_CPU / (8UL * BAUD)) - 1)
 
 #include <avr/io.h>
@@ -60,7 +60,7 @@
 
 #define VERSION_STRING          "TWIBOOT v3.3 NR"
 #define EEPROM_SUPPORT          0
-#define LED_SUPPORT             0
+#define LED_SUPPORT             1
 
 #ifndef USE_CLOCKSTRETCH
 #define USE_CLOCKSTRETCH        0
@@ -71,7 +71,7 @@
 #endif
 
 #ifndef TWI_ADDRESS
-#define TWI_ADDRESS             20
+#define TWI_ADDRESS             0x14
 #endif
 
 
@@ -203,7 +203,7 @@
 uint16_t boot_magic = 0;
 
 const static uint8_t info[16] = VERSION_STRING;
-const static uint16_t chipinfo[8] = {
+const static uint8_t chipinfo[8] = {
     SIGNATURE_0, SIGNATURE_1, SIGNATURE_2,
     SPM_PAGESIZE,
 
@@ -222,7 +222,7 @@ const static uint16_t chipinfo[8] = {
  
 //static uint8_t boot_timeout = TIMER_MSEC2IRQCNT(TIMEOUT_MS);
 //static volatile uint16_t boot_timeout = 1;
-static volatile uint16_t boot_timeout = 1000;
+static volatile uint16_t boot_timeout = 10000;
 
 static uint8_t cmd = CMD_WAIT;
 
@@ -1448,10 +1448,8 @@ int main(void)
         if(bootloadLoopCount > 20) {
           #if UART_DEBUG
             uart_puts("Too many loops..\n");
-            //uart_putint(cmd);
-            //uart_puts("\n");
           #endif
-          stay_in_bootloader = false;
+          stay_in_bootloader = 0;
         }
     }
 
