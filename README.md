@@ -21,6 +21,8 @@ For now this version is bulky and requires at least a 2k bootloader partition in
 
 I have tested this new version on Atmega328p, Atmega32a, Atmega32u, Atmega644p, Atmega1284p, and Atmega2560 and am skeptical that AVRs with I2C emulated via USI will work, though apparently the original twiboot supported that.  If you want to skip the hassle of recompiling, I've got pre-compiled versions for the microcontrollers I have tested it on.
 
+I have been unable to get this version working on the Atmega168 for some reason. Attempts to jump from a sketch on an Atmega168 to the bootloader fail no matter what method I try. Otherwise this should work on it as well as it does the larger Atmegas.
+
 ## Devices Supported in This Version ##
 Currently the following AVR MCUs are supported:
 
