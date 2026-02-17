@@ -19,7 +19,7 @@ The original twiboot didn't have built-in support for chunked data (that is, dat
 
 For now this version is bulky and requires at least a 2k bootloader partition in the flash. If you set UART_DEBUG to 1, you will require a 4k boot partition. But the UART is really only good for debugging; if it is enabled, the bootloader fails about half the time. Otherwise the bootloader is extremely reliable. I have tested it by going back and forth between two different firmware versions dozens of times and the correct firmware boots up every time without failure. Using my ESP8266 Remote Master to flash a firmware hosted on an Apache server, it typically takes 30 seconds to flash a 12kilobyte Atmega328p firmware.
 
-I have tested this new version on Atmega328p, Atmega32a, Atmega32u, Atmega644p, Atmega1284p, and Atmega2560 and am skeptical that AVRs with I2C emulated via USI will work, though apparently the original twiboot supported that.  If you want to skip the hassle of recompiling, I've got pre-compiled versions for the microcontrollers I have tested it on.
+I have tested this new version on Atmega328p, Atmega32a, Atmega32u, Atmega644p, Atmega1284p, and Atmega2560 and am skeptical that AVRs with I2C emulated via USI will still work, though apparently the original twiboot supported that.  If you want to skip the hassle of recompiling, I've got pre-compiled versions for the microcontrollers I have tested it on.
 
 I have been unable to get this version working on the Atmega168 for some reason. Attempts to jump from a sketch on an Atmega168 to the bootloader fail no matter what method I try. Otherwise this should work on it as well as it does the larger Atmegas.
 
